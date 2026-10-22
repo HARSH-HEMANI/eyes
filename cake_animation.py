@@ -411,11 +411,12 @@ class CakeAnimationManager:
         
         # Base y position for the message block
         start_y = int(screen_h / 2.0 + 120)
-        line_height = 48
+        total_lines = len(lines)
+        line_height = 44
         
         for i, line_text in enumerate(lines):
-            start_t = i * 0.22
-            end_t = min(1.0, start_t + 0.35)
+            start_t = i * (0.80 / float(total_lines))
+            end_t = min(1.0, start_t + 0.30)
             
             if message_fade <= start_t:
                 fade = 0.0
@@ -429,8 +430,6 @@ class CakeAnimationManager:
                 continue
                 
             # Line coloring:
-            # First and last lines in festive luminous gold and radiant rose,
-            # middle lines in elegant warm white
             if i == 0:
                 # "Happy Birthday!" in golden celebration amber
                 line_col = (
@@ -438,12 +437,19 @@ class CakeAnimationManager:
                     min(255, int(215 * fade)),
                     min(255, int(64 * fade))
                 )
-            elif i == 3:
+            elif i == 1:
+                # "to my sweetest sister! ❤️🎂," in sweet rose
+                line_col = (
+                    min(255, int(255 * fade)),
+                    min(255, int(141 * fade)),
+                    min(255, int(161 * fade))
+                )
+            elif i == total_lines - 1:
                 # "Happy Birthday! 🎂✨" in glowing rose pink
                 line_col = (
                     min(255, int(255 * fade)),
-                    min(255, int(105 * fade)),
-                    min(255, int(180 * fade))
+                    min(255, int(90 * fade)),
+                    min(255, int(145 * fade))
                 )
             else:
                 # Warm ivory cream

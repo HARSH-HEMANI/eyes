@@ -406,6 +406,32 @@ class EyeWebAnimation {
     return canvas;
   }
   
+  renderZoom(progress) {
+    const p = Math.max(0, Math.min(1, progress));
+    const t = p * p * p * (p * (p * 6.0 - 15.0) + 10.0);
+    const currentScale = 1.0 + 27.0 * Math.pow(t, 1.8);
+    
+    const focusBlend = Math.min(1.0, t * 1.5);
+    const focusX = (1.0 - focusBlend) * (this.portraitW / 2.0) + focusBlend * this.pupilSurfaceX;
+    const focusY = (1.0 - focusBlend) * (this.portraitH / 2.0) + focusBlend * this.pupilSurfaceY;
+    
+    const viewW = Math.max(4.0, this.width / currentScale);
+    const viewH = Math.max(4.0, this.height / currentScale);
+    const srcX = focusX - viewW / 2.0;
+    const srcY = focusY - viewH / 2.0;
+    
+    let alpha = 1.0;
+    if (p > 0.65) {
+      alpha = Math.max(0, 1.0 - (p - 0.65) / 0.35);
+    }
+    
+    this.ctx.save();
+    this.ctx.globalAlpha = alpha;
+    this.ctx.imageSmoothingEnabled = currentScale < 3.0;
+    this.ctx.drawImage(this.openPortraitCanvas, srcX, srcY, viewW, viewH, 0, 0, this.width, this.height);
+    this.ctx.restore();
+  }
+
   calculateCelebrationPulse(t) {
     return 1.0 + Math.sin(t * 2.2) * 0.02;
   }
@@ -487,27 +513,31 @@ class EyeWebAnimation {
   }
   
   renderMessage(elapsed, msgFade = 1.0) {
-    this.renderCake(elapsed, 1.0, -150);
+    const cakeOffsetY = this.height < 700 ? -120 : -165;
+    this.renderCake(elapsed, 1.0, cakeOffsetY);
     if (msgFade <= 0.005) return;
     
     const lines = [
       "Happy Birthday!",
-      "To our precious little sunshine,",
-      "Wishing you a lifetime of laughter & love,",
+      "to my sweetest sister! ❤️🎂,",
+      "Keep smiling and shining forever,",
+      "because you deserve all the beautiful",
+      "things in this world! ✨💕",
       "Happy Birthday! 🎂✨"
     ];
     
-    const startY = this.height / 2.0 + 125;
-    const fontSize = Math.min(32, Math.max(20, this.width * 0.045));
-    const lineHeight = fontSize * 1.45;
+    const startY = this.height / 2.0 + (this.height < 700 ? 95 : 120);
+    const fontSize = Math.min(26, Math.max(16, this.width * 0.038));
+    const lineHeight = fontSize * 1.35;
     
-    this.ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+    this.ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", "Segoe UI Emoji", serif`;
     this.ctx.textAlign = "center";
     this.ctx.textBaseline = "middle";
     
+    const totalLines = lines.length;
     lines.forEach((text, i) => {
-      const startT = i * 0.22;
-      const endT = Math.min(1.0, startT + 0.35);
+      const startT = i * (0.80 / totalLines);
+      const endT = Math.min(1.0, startT + 0.30);
       let fade = 0.0;
       if (msgFade > startT) {
         if (msgFade >= endT) fade = 1.0;
@@ -524,7 +554,10 @@ class EyeWebAnimation {
           this.ctx.fillStyle = "#ffd700";
           this.ctx.shadowColor = "rgba(255, 215, 0, 0.6)";
           this.ctx.shadowBlur = 10;
-        } else if (i === 3) {
+        } else if (i === 1) {
+          // Warm sweet rose
+          this.ctx.fillStyle = "#ff8da1";
+        } else if (i === totalLines - 1) {
           // Radiant rose pink
           this.ctx.fillStyle = "#ff5a91";
           this.ctx.shadowColor = "rgba(255, 90, 145, 0.6)";
