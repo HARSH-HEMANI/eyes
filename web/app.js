@@ -29,17 +29,20 @@ class EyeWebAnimation {
     this.img.crossOrigin = "anonymous";
     this.imgLoaded = false;
     
-    // Grid parameters
-    this.targetCols = window.innerWidth < 768 ? 140 : 200;
-    this.charW = 6;
-    this.charH = 11;
-    this.pupilNormX = 0.4629;
-    this.pupilNormY = 0.4115;
+    // High density grid with tight character spacing
+    this.targetCols = window.innerWidth < 768 ? 110 : 144;
+    this.charW = 5;
+    this.charH = 8;
+    this.stepX = 5;
+    this.stepY = 6;
+    // Focus coordinates (targeting the smiling baby in the photo)
+    this.pupilNormX = 0.50;
+    this.pupilNormY = 0.28;
     
     this.baseGrid = null;
     this.openPortraitCanvas = null;
     this.blinkCanvases = [];
-    this.masterHeartCanvas = null;
+    this.masterCakeCanvas = null;
     
     this.resizeCanvas();
     window.addEventListener("resize", () => this.resizeCanvas());
@@ -88,11 +91,17 @@ class EyeWebAnimation {
     const imgH = this.img.naturalHeight;
     const imgAspect = imgW / imgH;
     
+    // Fit portrait comfortably within window without clipping
+    const maxH = Math.min(window.innerHeight * 0.90, 960);
     this.cols = this.targetCols;
-    this.rows = Math.max(10, Math.round(this.cols / (imgAspect * (this.charH / this.charW))));
+    this.rows = Math.round(this.cols / (imgAspect * (this.stepY / this.stepX)));
+    if (this.rows * this.stepY > maxH) {
+      this.rows = Math.max(10, Math.floor(maxH / this.stepY));
+      this.cols = Math.round(this.rows * imgAspect * (this.stepY / this.stepX));
+    }
     
-    this.portraitW = this.cols * this.charW;
-    this.portraitH = this.rows * this.charH;
+    this.portraitW = this.cols * this.stepX;
+    this.portraitH = this.rows * this.stepY;
     
     this.pupilSurfaceX = this.pupilNormX * this.portraitW;
     this.pupilSurfaceY = this.pupilNormY * this.portraitH;
@@ -107,8 +116,8 @@ class EyeWebAnimation {
     // Precompute eyelid blink stages
     this.blinkCanvases = this.precomputeBlinkFrames(10);
     
-    // Precompute master ASCII heart
-    this.masterHeartCanvas = this.precomputeMasterHeart();
+    // Precompute master ASCII birthday cake
+    this.masterCakeCanvas = this.precomputeMasterCake();
   }
   
   processImage(sourceImg) {
@@ -132,18 +141,22 @@ class EyeWebAnimation {
         const blue = data[idx + 2];
         const lum = Math.round(0.299 * red + 0.587 * green + 0.114 * blue);
         
-        let char = " ";
-        if (lum > 14) {
-          const rampIdx = Math.min(rampLen - 1, Math.floor((lum / 255.0) * (rampLen - 1)));
-          char = ASCII_RAMP[rampIdx];
-        }
+        const rampIdx = Math.min(rampLen - 1, Math.floor((lum / 255.0) * (rampLen - 1)));
+        let char = ASCII_RAMP[rampIdx];
+        if (char === " ") char = ".";
+        
+        // Background tint to eliminate black voids between character strokes
+        const bgR = Math.floor(red * 0.45);
+        const bgG = Math.floor(green * 0.45);
+        const bgB = Math.floor(blue * 0.45);
         
         cells.push({
           c, r,
           char,
           color: `rgb(${red},${green},${blue})`,
-          x: c * this.charW,
-          y: r * this.charH,
+          bgColor: `rgb(${bgR},${bgG},${bgB})`,
+          x: c * this.stepX,
+          y: r * this.stepY,
           lum
         });
       }
@@ -157,7 +170,7 @@ class EyeWebAnimation {
     c.height = this.portraitH;
     const ctx = c.getContext("2d");
     
-    ctx.font = `bold ${this.charH - 1}px Consolas, monospace`;
+    ctx.font = `bold ${this.charH}px Consolas, monospace`;
     ctx.textBaseline = "top";
     
     const total = cells.length;
@@ -166,10 +179,13 @@ class EyeWebAnimation {
     
     for (let i = 0; i < indices.length; i++) {
       const cell = cells[indices[i]];
-      if (cell.char !== " ") {
-        ctx.fillStyle = cell.color;
-        ctx.fillText(cell.char, cell.x, cell.y);
-      }
+      // Fill cell background to eliminate empty spaces between characters
+      ctx.fillStyle = cell.bgColor;
+      ctx.fillRect(cell.x, cell.y, this.stepX, this.stepY);
+      
+      // Render colored ASCII text glyph
+      ctx.fillStyle = cell.color;
+      ctx.fillText(cell.char, cell.x, cell.y);
     }
     return c;
   }
@@ -177,7 +193,7 @@ class EyeWebAnimation {
   generateRevealOrder() {
     const centerCol = this.pupilNormX * this.cols;
     const centerRow = this.pupilNormY * this.rows;
-    const arFactor = this.charH / this.charW;
+    const arFactor = this.stepY / this.stepX;
     
     const scores = this.baseGrid.map((c, i) => {
       const dx = c.c - centerCol;
@@ -193,45 +209,8 @@ class EyeWebAnimation {
   }
   
   deformEyelids(sourceImg, closure) {
-    if (closure <= 0.005) return sourceImg;
-    
-    const w = sourceImg.naturalWidth || sourceImg.width;
-    const h = sourceImg.naturalHeight || sourceImg.height;
-    
-    const offCanvas = document.createElement("canvas");
-    offCanvas.width = w;
-    offCanvas.height = h;
-    const ctx = offCanvas.getContext("2d");
-    ctx.drawImage(sourceImg, 0, 0, w, h);
-    
-    // Draw smooth eyelid skin descent across eye opening
-    const cx = this.pupilNormX * w;
-    const cy = this.pupilNormY * h;
-    const rx = 0.34 * w;
-    const topY = cy - 0.12 * h;
-    const botY = cy + 0.24 * h;
-    
-    const targetLidY = topY + closure * (botY - topY);
-    
-    // Stretch eyelid skin
-    const skinSrcY = Math.max(0, topY - 0.20 * h);
-    const skinH = Math.max(1, topY - skinSrcY);
-    
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(cx, targetLidY, rx, (targetLidY - skinSrcY) * 0.6, 0, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.drawImage(sourceImg, 0, skinSrcY, w, skinH, 0, skinSrcY, w, targetLidY - skinSrcY + 5);
-    ctx.restore();
-    
-    // Eyelash contour line
-    ctx.strokeStyle = `rgba(30, 20, 25, ${0.7 * closure})`;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(cx, targetLidY, rx, 10, 0, 0, Math.PI);
-    ctx.stroke();
-    
-    return offCanvas;
+    // For portrait photos, preserve the complete portrait intact
+    return sourceImg;
   }
   
   precomputeBlinkFrames(numFrames = 10) {
@@ -246,9 +225,9 @@ class EyeWebAnimation {
     return list;
   }
   
-  precomputeMasterHeart() {
-    const cols = 76;
-    const rows = 38;
+  precomputeMasterCake() {
+    const cols = 80;
+    const rows = 44;
     const w = cols * this.charW;
     const h = rows * this.charH;
     
@@ -260,111 +239,265 @@ class EyeWebAnimation {
     ctx.font = `bold ${this.charH - 1}px Consolas, monospace`;
     ctx.textBaseline = "top";
     
-    const cx = w / 2;
-    const cy = h / 2 + 10;
+    const candleCols = [28, 34, 40, 46, 52];
+    const candleColors = [
+      "rgb(0, 229, 255)",    // Cyan
+      "rgb(255, 64, 129)",   // Rose Pink
+      "rgb(255, 214, 0)",    // Golden Yellow
+      "rgb(105, 240, 174)",  // Mint Green
+      "rgb(224, 64, 251)"    // Lavender Purple
+    ];
     
-    function isClassicHeart(x, y) {
-      if (y > 0.83 || y < -1.02) return false;
-      const xAbs = Math.abs(x);
-      if (y >= 0.20) {
-        return (Math.pow((xAbs - 0.55) / 0.57, 2) + Math.pow((y - 0.20) / 0.63, 2)) <= 1.0;
+    // 1. Candle bodies and wicks
+    candleCols.forEach((col, idx) => {
+      const color = candleColors[idx];
+      for (let r = 7; r <= 11; r++) {
+        const ch = (r + idx) % 2 === 0 ? "|" : "I";
+        ctx.fillStyle = color;
+        ctx.fillText(ch, col * this.charW, r * this.charH);
+      }
+      ctx.fillStyle = "#888888";
+      ctx.fillText("'", col * this.charW, 6 * this.charH);
+    });
+    
+    // 2. Top Tier (cols 24 to 56)
+    for (let c = 24; c <= 56; c++) {
+      const isCherry = [25, 32, 40, 48, 55].includes(c);
+      if (isCherry) {
+        ctx.fillStyle = "#ff1744";
+        ctx.fillText("@", c * this.charW, 12 * this.charH);
       } else {
-        const u = (0.20 - y) / 1.22;
-        const xMax = 1.13 * (1.0 - u) * (1.0 + 0.16 * u);
-        return xAbs <= xMax;
+        ctx.fillStyle = c % 2 === 0 ? "#fff0f5" : "#ffb6c1";
+        ctx.fillText(c % 2 === 0 ? "o" : "~", c * this.charW, 12 * this.charH);
       }
     }
-    
-    const halfRows = rows / 2;
-    const halfCols = cols / 2;
-    
-    for (let r = -halfRows; r <= halfRows; r++) {
-      const y = (-r / halfRows) * 0.95;
-      for (let c = -halfCols; c <= halfCols; c++) {
-        const x = (c / halfCols) * 1.18;
-        if (isClassicHeart(x, y)) {
-          const dist = Math.sqrt(x * x + Math.pow(y - 0.2, 2));
-          const red = 255;
-          const green = Math.min(255, Math.floor(22 + dist * 90 + (y > 0.4 ? 50 : 0)));
-          const blue = Math.min(255, Math.floor(62 + dist * 110 + (y > 0.4 ? 60 : 0)));
-          
-          const chIdx = Math.abs(c * 7 + r * 5) % HEART_CHARS.length;
-          const ch = HEART_CHARS[chIdx];
-          
-          ctx.fillStyle = `rgb(${red},${green},${blue})`;
-          ctx.fillText(ch, cx + c * this.charW - this.charW / 2, cy + r * this.charH - this.charH / 2);
+    for (let r = 13; r <= 14; r++) {
+      for (let c = 24; c <= 56; c++) {
+        const drip = c % 4 === (r % 2) * 2;
+        ctx.fillStyle = drip ? "#ffd1dc" : "#fff5fa";
+        ctx.fillText(drip ? "U" : "#", c * this.charW, r * this.charH);
+      }
+    }
+    const topChars = ["M", "W", "#", "%", "8", "&", "B"];
+    for (let r = 15; r <= 19; r++) {
+      for (let c = 24; c <= 56; c++) {
+        if (c === 24 || c === 56) {
+          ctx.fillStyle = "#f06292";
+          ctx.fillText("|", c * this.charW, r * this.charH);
+        } else if (r === 17) {
+          ctx.fillStyle = "#ff4081";
+          ctx.fillText("=", c * this.charW, r * this.charH);
+        } else {
+          const ch = topChars[(c * 7 + r * 5) % topChars.length];
+          const shade = 0.85 + 0.15 * Math.sin(c * 0.4);
+          ctx.fillStyle = `rgb(${Math.floor(255 * shade)},${Math.floor(170 * shade)},${Math.floor(190 * shade)})`;
+          ctx.fillText(ch, c * this.charW, r * this.charH);
         }
       }
     }
+    
+    // 3. Middle Tier (cols 16 to 64)
+    for (let c = 16; c <= 64; c++) {
+      if ([17, 23, 31, 40, 49, 57, 63].includes(c)) {
+        ctx.fillStyle = "#ffd700";
+        ctx.fillText("*", c * this.charW, 20 * this.charH);
+      } else {
+        ctx.fillStyle = "#fffff0";
+        ctx.fillText(c % 3 === 0 ? "O" : "~", c * this.charW, 20 * this.charH);
+      }
+    }
+    const sprinkles = ["#00e5ff", "#ff4081", "#ffd600", "#76ff03", "#ff9100"];
+    for (let r = 21; r <= 22; r++) {
+      for (let c = 16; c <= 64; c++) {
+        if ((c * 3 + r * 7) % 11 === 0) {
+          ctx.fillStyle = sprinkles[(c + r) % sprinkles.length];
+          ctx.fillText("+", c * this.charW, r * this.charH);
+        } else {
+          ctx.fillStyle = "#fff0f5";
+          ctx.fillText(c % 2 === 0 ? "w" : "m", c * this.charW, r * this.charH);
+        }
+      }
+    }
+    const midChars = ["@", "#", "8", "%", "&", "Q", "0"];
+    for (let r = 23; r <= 28; r++) {
+      for (let c = 16; c <= 64; c++) {
+        if (c === 16 || c === 64) {
+          ctx.fillStyle = "#8d6e63";
+          ctx.fillText("|", c * this.charW, r * this.charH);
+        } else if (r === 25) {
+          ctx.fillStyle = c % 4 === 0 ? "#ffd700" : "#6d4c41";
+          ctx.fillText(c % 4 === 0 ? "*" : "=", c * this.charW, r * this.charH);
+        } else if (r === 26) {
+          ctx.fillStyle = "#e91e63";
+          ctx.fillText("~", c * this.charW, r * this.charH);
+        } else {
+          const ch = midChars[(c * 9 + r * 11) % midChars.length];
+          const shade = 0.8 + 0.2 * Math.cos(c * 0.35 + r * 0.2);
+          ctx.fillStyle = `rgb(${Math.floor(210 * shade)},${Math.floor(145 * shade)},${Math.floor(105 * shade)})`;
+          ctx.fillText(ch, c * this.charW, r * this.charH);
+        }
+      }
+    }
+    
+    // 4. Base Tier (cols 8 to 72)
+    for (let c = 8; c <= 72; c++) {
+      if ([9, 15, 22, 30, 40, 50, 58, 65, 71].includes(c)) {
+        ctx.fillStyle = "#ff1744";
+        ctx.fillText("@", c * this.charW, 29 * this.charH);
+      } else {
+        ctx.fillStyle = "#fff8e1";
+        ctx.fillText(c % 2 === 0 ? "v" : "~", c * this.charW, 29 * this.charH);
+      }
+    }
+    for (let r = 30; r <= 31; r++) {
+      for (let c = 8; c <= 72; c++) {
+        if (c % 5 === 0) {
+          ctx.fillStyle = "#ffd700";
+          ctx.fillText("o", c * this.charW, r * this.charH);
+        } else {
+          ctx.fillStyle = "#ffebee";
+          ctx.fillText(c % 2 === 0 ? "S" : "C", c * this.charW, r * this.charH);
+        }
+      }
+    }
+    const baseChars = ["@", "#", "W", "M", "8", "B", "%", "&"];
+    for (let r = 32; r <= 37; r++) {
+      for (let c = 8; c <= 72; c++) {
+        if (c === 8 || c === 72) {
+          ctx.fillStyle = "#ffb300";
+          ctx.fillText("|", c * this.charW, r * this.charH);
+        } else if (r === 34) {
+          ctx.fillStyle = c % 3 === 0 ? "#ffeb3b" : "#ff4081";
+          ctx.fillText(c % 3 === 0 ? "*" : "-", c * this.charW, r * this.charH);
+        } else if (r === 35) {
+          ctx.fillStyle = "#f48fb1";
+          ctx.fillText("~", c * this.charW, r * this.charH);
+        } else {
+          const ch = baseChars[(c * 13 + r * 7) % baseChars.length];
+          const shade = 0.85 + 0.15 * Math.sin(c * 0.25);
+          ctx.fillStyle = `rgb(${Math.floor(255 * shade)},${Math.floor(190 * shade)},${Math.floor(130 * shade)})`;
+          ctx.fillText(ch, c * this.charW, r * this.charH);
+        }
+      }
+    }
+    
+    // 5. Cake Stand & Pedestal (cols 4 to 76)
+    for (let c = 4; c <= 76; c++) {
+      const gold = Math.floor(200 + 55 * Math.cos((c - 40) * 0.1));
+      ctx.fillStyle = `rgb(255, ${gold}, 0)`;
+      ctx.fillText("=", c * this.charW, 38 * this.charH);
+      ctx.fillStyle = "#ffecb3";
+      ctx.fillText(c % 4 === 0 ? "*" : "-", c * this.charW, 39 * this.charH);
+    }
+    for (let r = 40; r <= 42; r++) {
+      const cStart = r === 40 ? 32 : (r === 41 ? 30 : 22);
+      const cEnd = r === 40 ? 48 : (r === 41 ? 50 : 58);
+      for (let c = cStart; c <= cEnd; c++) {
+        let ch = c % 3 === 0 ? "|" : ":";
+        if (c === cStart) ch = "/";
+        else if (c === cEnd) ch = "\\";
+        else if (r === 42) ch = "=";
+        const gShade = Math.floor(180 + 30 * Math.sin(c * 0.3));
+        ctx.fillStyle = `rgb(235, ${gShade}, 60)`;
+        ctx.fillText(ch, c * this.charW, r * this.charH);
+      }
+    }
+    
     return canvas;
   }
   
-  calculateHeartbeat(t) {
-    const period = 0.95;
-    const phase = (t % period) / period;
-    const beat1 = Math.exp(-Math.pow((phase - 0.12) / 0.065, 2)) * 0.11;
-    const beat2 = Math.exp(-Math.pow((phase - 0.32) / 0.075, 2)) * 0.06;
-    const breathe = Math.sin(phase * 2.0 * Math.PI) * 0.010;
-    return 1.0 + beat1 + beat2 + breathe;
+  calculateCelebrationPulse(t) {
+    return 1.0 + Math.sin(t * 2.2) * 0.02;
   }
   
-  renderZoom(progress) {
-    const p = Math.max(0, Math.min(1, progress));
-    const t = p * p * p * (p * (p * 6.0 - 15.0) + 10.0);
-    const currentScale = 1.0 + 27.0 * Math.pow(t, 1.8);
-    
-    const focusBlend = Math.min(1.0, t * 1.5);
-    const focusX = (1.0 - focusBlend) * (this.portraitW / 2.0) + focusBlend * this.pupilSurfaceX;
-    const focusY = (1.0 - focusBlend) * (this.portraitH / 2.0) + focusBlend * this.pupilSurfaceY;
-    
-    const viewW = Math.max(4.0, this.width / currentScale);
-    const viewH = Math.max(4.0, this.height / currentScale);
-    const srcX = focusX - viewW / 2.0;
-    const srcY = focusY - viewH / 2.0;
-    
-    let alpha = 1.0;
-    if (p > 0.65) {
-      alpha = Math.max(0, 1.0 - (p - 0.65) / 0.35);
-    }
-    
-    this.ctx.save();
-    this.ctx.globalAlpha = alpha;
-    this.ctx.imageSmoothingEnabled = currentScale < 3.0;
-    this.ctx.drawImage(this.openPortraitCanvas, srcX, srcY, viewW, viewH, 0, 0, this.width, this.height);
-    this.ctx.restore();
-  }
-  
-  renderHeart(elapsed, entranceProgress = 1.0, centerOffsetY = -50) {
+  renderCake(elapsed, entranceProgress = 1.0, centerOffsetY = -50) {
     const cx = this.width / 2.0;
     const cy = this.height / 2.0 + centerOffsetY;
     
-    const beat = this.calculateHeartbeat(elapsed);
+    const pulse = this.calculateCelebrationPulse(elapsed);
     const eScale = entranceProgress * entranceProgress * (3.0 - 2.0 * entranceProgress);
-    const totalScale = beat * eScale;
+    const totalScale = pulse * eScale;
     if (totalScale <= 0.01) return;
     
-    const tw = this.masterHeartCanvas.width * totalScale;
-    const th = this.masterHeartCanvas.height * totalScale;
+    const tw = this.masterCakeCanvas.width * totalScale;
+    const th = this.masterCakeCanvas.height * totalScale;
     
     this.ctx.save();
     if (eScale < 0.99) this.ctx.globalAlpha = eScale;
     this.ctx.imageSmoothingEnabled = true;
-    this.ctx.drawImage(this.masterHeartCanvas, cx - tw / 2, cy - th / 2, tw, th);
+    
+    // Draw cake body
+    const cakeLeft = cx - tw / 2.0;
+    const cakeTop = cy - th / 2.0;
+    this.ctx.drawImage(this.masterCakeCanvas, cakeLeft, cakeTop, tw, th);
+    
+    // Real-time flickering flames & sparkles scaled to cake coordinates
+    const scaleFactor = totalScale;
+    const charW = this.charW * scaleFactor;
+    const charH = this.charH * scaleFactor;
+    
+    this.ctx.font = `bold ${Math.max(8, Math.round((this.charH - 1) * scaleFactor))}px Consolas, monospace`;
+    this.ctx.textBaseline = "top";
+    
+    const candleCols = [28, 34, 40, 46, 52];
+    candleCols.forEach((col, idx) => {
+      const flicker = Math.sin(elapsed * 12.0 + idx * 1.9) * 0.4 + Math.sin(elapsed * 23.0 + idx * 0.7) * 0.2;
+      const shiftX = flicker * (charW * 0.35);
+      const fx = cakeLeft + col * charW + shiftX;
+      
+      // Base flame (orange-red)
+      this.ctx.fillStyle = "#ff5722";
+      this.ctx.fillText("^", fx, cakeTop + 5 * charH);
+      
+      // Core flame (amber)
+      this.ctx.fillStyle = "#ffc107";
+      this.ctx.fillText(flicker > 0 ? "(" : ")", fx * 0.98, cakeTop + 4 * charH);
+      
+      // Flame tip (luminous yellow)
+      this.ctx.fillStyle = "#fff59d";
+      this.ctx.fillText(Math.abs(flicker) < 0.2 ? "*" : "^", fx * 1.02, cakeTop + 3 * charH);
+      
+      // Occasional spark
+      if (Math.sin(elapsed * 8.0 + idx) > 0.3) {
+        this.ctx.fillStyle = "#ffee58";
+        this.ctx.fillText(".", fx * 1.05, cakeTop + 2 * charH);
+      }
+    });
+    
+    // Twinkling sparkles drifting around the cake
+    const sparkles = [
+      [8, 6, '*'], [14, 12, '+'], [70, 8, '*'], [65, 14, '+'],
+      [10, 24, '.'], [72, 22, '.'], [6, 32, '*'], [74, 30, '+'],
+      [18, 4, '.'], [62, 5, '.'], [22, 10, '+'], [58, 9, '*']
+    ];
+    sparkles.forEach(([sc, sr, sch], sIdx) => {
+      const twinkle = 0.5 + 0.5 * Math.sin(elapsed * 4.5 + sIdx * 1.3);
+      if (twinkle > 0.25) {
+        this.ctx.fillStyle = `rgba(255, 235, 179, ${twinkle})`;
+        this.ctx.fillText(sch, cakeLeft + sc * charW, cakeTop + sr * charH);
+      }
+    });
+    
     this.ctx.restore();
   }
   
+  // Backward compatibility alias
+  renderHeart(elapsed, entranceProgress = 1.0, centerOffsetY = -50) {
+    this.renderCake(elapsed, entranceProgress, centerOffsetY);
+  }
+  
   renderMessage(elapsed, msgFade = 1.0) {
-    this.renderHeart(elapsed, 1.0, -130);
+    this.renderCake(elapsed, 1.0, -150);
     if (msgFade <= 0.005) return;
     
     const lines = [
-      "I am sorry,",
-      "Please, Give me this last chance,",
-      "I want to be with you,",
-      "Always With You!!!"
+      "Happy Birthday!",
+      "To our precious little sunshine,",
+      "Wishing you a lifetime of laughter & love,",
+      "Happy Birthday! 🎂✨"
     ];
     
-    const startY = this.height / 2.0 + 120;
+    const startY = this.height / 2.0 + 125;
     const fontSize = Math.min(32, Math.max(20, this.width * 0.045));
     const lineHeight = fontSize * 1.45;
     
@@ -386,14 +519,18 @@ class EyeWebAnimation {
       if (fade > 0.01) {
         this.ctx.save();
         this.ctx.globalAlpha = fade;
-        if (i === 3) {
+        if (i === 0) {
+          // Luminous celebration gold
+          this.ctx.fillStyle = "#ffd700";
+          this.ctx.shadowColor = "rgba(255, 215, 0, 0.6)";
+          this.ctx.shadowBlur = 10;
+        } else if (i === 3) {
+          // Radiant rose pink
           this.ctx.fillStyle = "#ff5a91";
           this.ctx.shadowColor = "rgba(255, 90, 145, 0.6)";
           this.ctx.shadowBlur = 12;
-        } else if (i === 0) {
-          this.ctx.fillStyle = "#ffeef5";
         } else {
-          this.ctx.fillStyle = "#fcf2f8";
+          this.ctx.fillStyle = "#ffeef5";
         }
         this.ctx.fillText(text, this.width / 2.0, startY + i * lineHeight);
         this.ctx.restore();
@@ -434,13 +571,13 @@ class EyeWebAnimation {
       const p = (elapsed - T_POST_BLINK_END) / (T_ZOOM_END - T_POST_BLINK_END);
       this.renderZoom(p);
       if (p > 0.70) {
-        const heartP = (p - 0.70) / 0.30;
-        this.renderHeart(elapsed, heartP * 0.85);
+        const cakeP = (p - 0.70) / 0.30;
+        this.renderCake(elapsed, cakeP * 0.85);
       }
     } else if (elapsed < T_HEART_ONLY_END) {
       const p = (elapsed - T_ZOOM_END) / (T_HEART_ONLY_END - T_ZOOM_END);
       const currentEntrance = 0.85 + 0.15 * Math.min(1.0, p * 2.0);
-      this.renderHeart(elapsed, currentEntrance);
+      this.renderCake(elapsed, currentEntrance);
     } else if (elapsed < T_FINAL_END) {
       const p = Math.min(1.0, (elapsed - T_HEART_ONLY_END) / 3.0);
       this.renderMessage(elapsed, p);

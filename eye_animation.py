@@ -86,7 +86,8 @@ class EyeAnimationManager:
         for i, c in enumerate(cells):
             # Distance from pupil
             dx = (c['col'] - center_col)
-            dy = (c['row'] - center_row) * (self.renderer.char_h / self.renderer.char_w)
+            step_ratio = (self.renderer.step_y / self.renderer.step_x) if hasattr(self.renderer, 'step_y') else (self.renderer.char_h / self.renderer.char_w)
+            dy = (c['row'] - center_row) * step_ratio
             dist = math.sqrt(dx*dx + dy*dy)
             
             # Column-based falling delay + random scatter
@@ -106,7 +107,8 @@ class EyeAnimationManager:
         over the eye opening, with upper lid skin stretching downward.
         Supports both single-eye macro close-ups and multi-eye portraits.
         """
-        if closure <= 0.005:
+        # If image is a portrait photograph rather than a wide macro eye closeup, preserve image intact
+        if closure <= 0.005 or self.img_h >= self.img_w:
             return self.base_img_rgb.copy()
             
         h, w = self.img_h, self.img_w

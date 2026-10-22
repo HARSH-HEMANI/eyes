@@ -1,7 +1,7 @@
 @echo off
-title Her Eye — Colored ASCII Cinematic Animation
+title Birthday Celebration — Colored ASCII Cinematic Animation ✨
 echo =======================================================
-echo    Her Eye — Colored ASCII Cinematic Animation
+echo    Birthday Celebration — Colored ASCII Animation ✨
 echo =======================================================
 echo.
 

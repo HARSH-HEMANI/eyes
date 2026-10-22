@@ -1,10 +1,10 @@
 """
-Her Eye — Colored ASCII Cinematic Animation
+Her Eye / Birthday Animation — Colored ASCII Cinematic Animation
 Module: ascii_renderer.py
 
-Converts source photographs into photorealistic colored ASCII character portraits.
-Handles font aspect ratio correction, color sampling, brightness/texture character
-selection, and fast surface rendering with caching.
+Converts source photographs into photorealistic, highly recognizable colored
+ASCII character portraits with aspect ratio correction, tight character spacing,
+and true photograph color retention.
 """
 
 import os
@@ -12,18 +12,20 @@ import cv2
 import numpy as np
 import pygame
 
-# Character density ramp from darkest (sparse/space) to brightest (dense)
-ASCII_RAMP = " .'`^\",:;Il!i~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+# Rich character density ramp from darkest to brightest
+ASCII_RAMP = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
+ASCII_RAMP_REV = ASCII_RAMP[::-1]
+
 
 class ASCIIRenderer:
     """
-    Renders high-density colored ASCII mosaics from images with aspect ratio
-    correction and character surface caching.
+    Renders ultra-high density colored ASCII mosaics from images with aspect ratio
+    correction, minimized character spacing, and cell background color filling for
+    instant human recognition.
     """
-    def __init__(self, font_name="consolas", font_size=11):
+    def __init__(self, font_name="consolas", font_size=8, bg_tint_ratio=0.45, vertical_overlap=2):
         pygame.font.init()
-        # Find monospace font
-        self.font = pygame.font.SysFont(font_name, font_size)
+        self.font = pygame.font.SysFont(font_name, font_size, bold=True)
         if not self.font:
             self.font = pygame.font.Font(None, font_size)
             
@@ -31,91 +33,81 @@ class ASCIIRenderer:
         test_surf = self.font.render("M", True, (255, 255, 255))
         self.char_w = max(1, test_surf.get_width())
         self.char_h = max(1, test_surf.get_height())
-        self.font_aspect = self.char_w / self.char_h  # typically ~0.55
         
-        # Pre-render glyph textures in white for blitting with color mod if needed
-        self.glyph_cache = {}
-        for ch in ASCII_RAMP:
-            self.glyph_cache[ch] = self.font.render(ch, True, (255, 255, 255))
-        self.glyph_cache[" "] = pygame.Surface((self.char_w, self.char_h), pygame.SRCALPHA)
+        # Tight cell stepping (lowering the spaces between characters)
+        self.step_x = self.char_w
+        self.step_y = max(1, self.char_h - vertical_overlap)
+        self.font_aspect = self.step_x / float(self.step_y)
+        
+        # Background tint ratio (0.0 = black void, 0.45 = photorealistic fill behind glyphs)
+        self.bg_tint_ratio = bg_tint_ratio
 
-    def calculate_grid_size(self, img_w, img_h, target_cols=180):
+    def calculate_grid_size(self, img_w, img_h, target_cols=144, max_height=960):
         """
-        Calculates (cols, rows) such that on-screen display matches the original image's aspect ratio.
-        cols * char_w / (rows * char_h) == img_w / img_h
-        rows = cols * (img_h / img_w) * (char_w / char_h)
+        Calculates (cols, rows) such that on-screen display matches the original image's aspect ratio
+        and fits comfortably within the target display window without vertical clipping.
         """
-        img_aspect = img_w / max(1, img_h)
+        img_aspect = img_w / float(max(1, img_h))
         cols = int(target_cols)
-        rows = int(round(cols / (img_aspect * (self.char_h / self.char_w))))
+        rows = int(round(cols / (img_aspect * (self.step_y / float(self.step_x)))))
+        
+        # If portrait exceeds max_height, rescale gracefully so whole person is visible
+        if rows * self.step_y > max_height:
+            rows = max(10, max_height // self.step_y)
+            cols = int(round(rows * img_aspect * (self.step_y / float(self.step_x))))
+            
         rows = max(10, rows)
+        cols = max(10, cols)
         return cols, rows
 
     def process_image(self, img_rgb, cols, rows):
         """
         Downsamples/samples the image to (cols, rows) and computes:
-        - character indices based on luminance and local gradient
+        - character indices based on luminance
         - true RGB colors
-        - brightness values
+        - background cell tint to eliminate black voids
         Returns a dict of processed grid data.
         """
-        # Resize image to match grid
         resized = cv2.resize(img_rgb, (cols, rows), interpolation=cv2.INTER_AREA)
-        
-        # Grayscale for luminance
         gray = cv2.cvtColor(resized, cv2.COLOR_RGB2GRAY)
         
-        # Sobel edge detection for directional characters
-        grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-        grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-        grad_mag = np.sqrt(grad_x**2 + grad_y**2)
-        grad_dir = np.arctan2(grad_y, grad_x) * (180.0 / np.pi)  # -180 to 180
-        
         cells = []
-        ramp_len = len(ASCII_RAMP)
+        ramp_len = len(ASCII_RAMP_REV)
         
         for r in range(rows):
             for c in range(cols):
                 b = int(gray[r, c])
                 col_rgb = (int(resized[r, c, 0]), int(resized[r, c, 1]), int(resized[r, c, 2]))
                 
-                # Check for strong directional edge
-                g_mag = grad_mag[r, c]
-                g_ang = grad_dir[r, c]
+                # Select rich density character
+                idx = int((b / 255.0) * (ramp_len - 1))
+                char = ASCII_RAMP_REV[max(0, min(ramp_len - 1, idx))]
+                if char == " ":
+                    char = "."
                 
-                if b < 12:
-                    char = " "
-                elif g_mag > 65 and b > 40:
-                    # Directional edge glyph
-                    if -22.5 <= g_ang <= 22.5 or g_ang >= 157.5 or g_ang <= -157.5:
-                        char = "|"
-                    elif 22.5 < g_ang < 67.5 or -157.5 < g_ang < -112.5:
-                        char = "/"
-                    elif 67.5 <= g_ang <= 112.5 or -112.5 <= g_ang <= -67.5:
-                        char = "-"
-                    else:
-                        char = "\\"
-                else:
-                    # Density ramp
-                    ramp_idx = int((b / 255.0) * (ramp_len - 1))
-                    ramp_idx = max(0, min(ramp_len - 1, ramp_idx))
-                    char = ASCII_RAMP[ramp_idx]
+                # Cell background tint to eliminate empty spaces between character strokes
+                bg_col = (
+                    int(col_rgb[0] * self.bg_tint_ratio),
+                    int(col_rgb[1] * self.bg_tint_ratio),
+                    int(col_rgb[2] * self.bg_tint_ratio)
+                )
                 
                 cells.append({
                     'col': c,
                     'row': r,
                     'char': char,
                     'color': col_rgb,
+                    'bg_color': bg_col,
                     'brightness': b,
-                    'x': c * self.char_w,
-                    'y': r * self.char_h
+                    'x': c * self.step_x,
+                    'y': r * self.step_y
                 })
                 
         return {
             'cols': cols,
             'rows': rows,
-            'width': cols * self.char_w,
-            'height': rows * self.char_h,
+            'width': cols * self.step_x,
+            'height': rows * self.step_y,
             'cells': cells,
             'resized_rgb': resized
         }
@@ -123,7 +115,7 @@ class ASCIIRenderer:
     def render_to_surface(self, grid_data, reveal_progress=1.0, reveal_order=None, flicker_intensity=0.0):
         """
         Renders the grid cells onto a Pygame surface.
-        Supports reveal_progress (0.0 to 1.0) with custom cell reveal_order.
+        Fills character cell backgrounds and draws glyphs tightly to form a clear portrait.
         """
         surf = pygame.Surface((grid_data['width'], grid_data['height']), pygame.SRCALPHA)
         surf.fill((0, 0, 0, 0))
@@ -132,30 +124,42 @@ class ASCIIRenderer:
         total_cells = len(cells)
         visible_count = int(round(total_cells * max(0.0, min(1.0, reveal_progress))))
         
-        # If no custom order, order is simply linear
         if reveal_order is None:
             indices_to_draw = range(visible_count)
         else:
             indices_to_draw = reveal_order[:visible_count]
             
         font = self.font
+        step_x = self.step_x
+        step_y = self.step_y
+        
         for idx in indices_to_draw:
             cell = cells[idx]
             ch = cell['char']
-            if ch == " ":
-                continue
-                
+            px = cell['x']
+            py = cell['y']
+            
             color = cell['color']
+            bg_col = cell['bg_color']
+            
             if flicker_intensity > 0.0:
-                # Subtle brightness flicker on frontier characters
                 flicker = 1.0 + np.random.uniform(-flicker_intensity, flicker_intensity)
                 color = (
                     min(255, int(color[0] * flicker)),
                     min(255, int(color[1] * flicker)),
                     min(255, int(color[2] * flicker))
                 )
-                
+                bg_col = (
+                    min(255, int(bg_col[0] * flicker)),
+                    min(255, int(bg_col[1] * flicker)),
+                    min(255, int(bg_col[2] * flicker))
+                )
+            
+            # 1. Fill background of cell to lower space between characters
+            pygame.draw.rect(surf, bg_col, (px, py, step_x, step_y))
+            
+            # 2. Render colored ASCII text glyph
             char_surf = font.render(ch, True, color)
-            surf.blit(char_surf, (cell['x'], cell['y']))
+            surf.blit(char_surf, (px, py))
             
         return surf
